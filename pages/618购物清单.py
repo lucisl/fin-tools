@@ -181,3 +181,61 @@ def delete_category(category_name):
         save_categories(categories)
         return True
     return False
+
+
+def calculate_budget_summary(items):
+    """计算预算汇总"""
+    total_budget = sum(item.get("budget_price", 0) * item.get("quantity", 1) for item in items)
+    spent = sum(item.get("actual_price", 0) for item in items if item["status"] == "已购买")
+    remaining = total_budget - spent
+    return {
+        "total_budget": total_budget,
+        "spent": spent,
+        "remaining": remaining
+    }
+
+
+def calculate_category_stats(items):
+    """按分类统计"""
+    stats = {}
+    for item in items:
+        category = item.get("category", "未分类")
+        if category not in stats:
+            stats[category] = {
+                "count": 0,
+                "budget": 0,
+                "spent": 0
+            }
+        stats[category]["count"] += 1
+        stats[category]["budget"] += item.get("budget_price", 0) * item.get("quantity", 1)
+        if item["status"] == "已购买":
+            stats[category]["spent"] += item.get("actual_price", 0)
+    return stats
+
+
+def calculate_priority_stats(items):
+    """按优先级统计"""
+    stats = {
+        "必须": {"count": 0, "budget": 0, "spent": 0},
+        "想买": {"count": 0, "budget": 0, "spent": 0},
+        "可选": {"count": 0, "budget": 0, "spent": 0}
+    }
+    
+    for item in items:
+        priority = item.get("priority", "可选")
+        if priority in stats:
+            stats[priority]["count"] += 1
+            stats[priority]["budget"] += item.get("budget_price", 0) * item.get("quantity", 1)
+            if item["status"] == "已购买":
+                stats[priority]["spent"] += item.get("actual_price", 0)
+    
+    return stats
+
+
+def calculate_completion_rate(items):
+    """计算购买完成率"""
+    if not items:
+        return 0
+    
+    completed = sum(1 for item in items if item["status"] == "已购买")
+    return (completed / len(items)) * 100

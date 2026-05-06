@@ -69,3 +69,74 @@ def export_to_excel(items):
                 cell.alignment = Alignment(vertical="center")
     
     return output.getvalue()
+
+
+def add_item(name, category, quantity, unit, budget_price, priority, platform, notes=""):
+    """新增商品"""
+    items = load_data()
+    new_item = {
+        "id": str(datetime.now().timestamp()),
+        "name": name,
+        "category": category,
+        "quantity": quantity,
+        "unit": unit,
+        "budget_price": budget_price,
+        "priority": priority,
+        "platform": platform,
+        "status": "待购买",
+        "actual_price": 0,
+        "notes": notes,
+        "created_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "updated_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    items.append(new_item)
+    save_data(items)
+    return new_item
+
+
+def update_item(item_id, **kwargs):
+    """更新商品信息"""
+    items = load_data()
+    for item in items:
+        if item["id"] == item_id:
+            item.update(kwargs)
+            item["updated_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            break
+    save_data(items)
+
+
+def delete_item(item_id):
+    """删除商品"""
+    items = load_data()
+    items = [item for item in items if item["id"] != item_id]
+    save_data(items)
+
+
+def toggle_status(item_id):
+    """切换购买状态"""
+    items = load_data()
+    status_cycle = ["待购买", "已购买", "已取消"]
+    for item in items:
+        if item["id"] == item_id:
+            current_index = status_cycle.index(item["status"])
+            next_index = (current_index + 1) % len(status_cycle)
+            item["status"] = status_cycle[next_index]
+            item["updated_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            break
+    save_data(items)
+
+
+def get_items(category=None, priority=None, status=None):
+    """获取商品列表,支持筛选"""
+    items = load_data()
+    
+    if category and category != "全部":
+        items = [item for item in items if item["category"] == category]
+    
+    if priority and priority != "全部":
+        items = [item for item in items if item["priority"] == priority]
+    
+    if status and status != "全部":
+        items = [item for item in items if item["status"] == status]
+    
+    return items

@@ -239,3 +239,37 @@ def calculate_completion_rate(items):
     
     completed = sum(1 for item in items if item["status"] == "已购买")
     return (completed / len(items)) * 100
+
+
+# ======================================
+#               Web UI
+# ======================================
+st.title("🛒 618购物清单")
+
+# 侧边栏筛选
+st.sidebar.header("🔍 筛选条件")
+
+# 加载分类
+categories = load_categories()
+category_filter = st.sidebar.selectbox("按分类筛选", ["全部"] + categories)
+
+# 按优先级筛选
+priority_filter = st.sidebar.selectbox("按优先级筛选", ["全部", "必须", "想买", "可选"])
+
+# 按状态筛选
+status_filter = st.sidebar.selectbox("按状态筛选", ["全部", "待购买", "已购买", "已取消"])
+
+# 获取筛选后的商品
+filtered_items = get_items(
+    category=category_filter,
+    priority=priority_filter,
+    status=status_filter
+)
+
+# 侧边栏预算统计
+st.sidebar.markdown("---")
+st.sidebar.header("💰 预算统计")
+budget_summary = calculate_budget_summary(load_data())
+st.sidebar.metric("总预算", f"¥{budget_summary['total_budget']:.2f}")
+st.sidebar.metric("已花费", f"¥{budget_summary['spent']:.2f}")
+st.sidebar.metric("剩余预算", f"¥{budget_summary['remaining']:.2f}")

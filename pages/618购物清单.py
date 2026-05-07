@@ -1,161 +1,180 @@
 import streamlit as st
 import requests
+import base64
+import json
 from datetime import datetime
 
-API_BASE_URL = "https://api.test.cinta.team/litabasic/v1/db"
+# GitHub配置 - 从secrets读取（安全方式）
+try:
+    GITHUB_TOKEN = st.secrets["github_token"]
+    GITHUB_OWNER = st.secrets.get("github_owner", "lucisl")
+    GITHUB_REPO = st.secrets.get("github_repo", "fin-tools")
+except KeyError:
+    st.error("⚠️ 请在Streamlit Cloud配置Secrets！查看README了解如何配置")
+    st.stop()
+GITHUB_FILE_PATH = "data/shopping_list.json"
+GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{GITHUB_FILE_PATH}"
 
 
-def execute_query(sql, params=None):
-    """执行查询SQL"""
+def get_github_headers():
+    """获取GitHub API请求头"""
+    return {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+
+
+def get_file_from_github():
+    """从GitHub获取文件内容"""
     try:
-        response = requests.post(
-            f"{API_BASE_URL}/query",
-            json={"sql": sql, "params": params or []},
+        response = requests.get(
+            GITHUB_API_URL,
+            headers=get_github_headers(),
             timeout=10
         )
-        result = response.json()
         
-        if result.get("success"):
-            return result.get("data", [])
+        if response.status_code == 200:
+            data = response.json()
+            content = base64.b64decode(data["content"]).decode("utf-8")
+            sha = data["sha"]
+            return json.loads(content), sha
+        elif response.status_code == 404:
+            # 文件不存在，返回空数据和None sha
+            return [], None
         else:
-            st.error(f"查询失败: {result.get('error')}")
-            return []
+            st.error(f"获取文件失败: {response.status_code}")
+            return [], None
     except Exception as e:
-        st.error(f"API调用失败: {e}")
-        return []
+        st.error(f"GitHub API调用失败: {e}")
+        return [], None
 
 
-def execute_update(sql, params=None):
-    """执行更新SQL"""
+def update_file_on_github(content, sha=None, message="更新购物清单"):
+    """更新GitHub上的文件"""
     try:
-        response = requests.post(
-            f"{API_BASE_URL}/execute",
-            json={"sql": sql, "params": params or []},
-            timeout=10
-        )
-        result = response.json()
+        # 编码内容为base64
+        content_encoded = base64.b64encode(
+            json.dumps(content, ensure_ascii=False, indent=2).encode("utf-8")
+        ).decode("utf-8")
         
-        if result.get("success"):
-            return result.get("affectedRows", 0)
-        else:
-            st.error(f"执行失败: {result.get('error')}")
-            return 0
-    except Exception as e:
-        st.error(f"API调用失败: {e}")
-        return 0
-
-
-def init_db():
-    """初始化数据库表"""
-    sql = """
-        CREATE TABLE IF NOT EXISTS shopping_items (
-            id VARCHAR(50) PRIMARY KEY,
-            name VARCHAR(255) NOT NULL,
-            budget_price DECIMAL(10,2) DEFAULT 0,
-            platform VARCHAR(50) DEFAULT '',
-            status VARCHAR(20) DEFAULT '待购买',
-            actual_price DECIMAL(10,2) DEFAULT 0,
-            notes TEXT,
-            created_time DATETIME NOT NULL,
-            updated_time DATETIME NOT NULL
+        # 构建请求体
+        payload = {
+            "message": message,
+            "content": content_encoded,
+            "branch": "main"
+        }
+        
+        # 如果文件已存在，需要提供sha
+        if sha:
+            payload["sha"] = sha
+        
+        response = requests.put(
+            GITHUB_API_URL,
+            headers=get_github_headers(),
+            json=payload,
+            timeout=15
         )
-    """
-    execute_update(sql)
+        
+        if response.status_code in [200, 201]:
+            return True, response.json().get("content", {}).get("sha")
+        else:
+            st.error(f"更新文件失败: {response.status_code} - {response.text}")
+            return False, sha
+    except Exception as e:
+        st.error(f"更新GitHub文件失败: {e}")
+        return False, sha
 
 
 def load_data():
     """加载购物清单数据"""
-    init_db()
-    sql = "SELECT * FROM shopping_items ORDER BY created_time DESC"
-    return execute_query(sql)
+    data, sha = get_file_from_github()
+    return data if data else []
+
+
+def save_data(data, message="更新购物清单"):
+    """保存购物清单数据到GitHub"""
+    items, sha = get_file_from_github()
+    success, new_sha = update_file_on_github(data, sha, message)
+    return success
 
 
 def add_item(name, budget_price, platform, notes=""):
     """新增商品"""
-    item_id = str(datetime.now().timestamp())
-    created_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    items = load_data()
     
-    sql = """
-        INSERT INTO shopping_items 
-        (id, name, budget_price, platform, status, actual_price, notes, created_time, updated_time)
-        VALUES (?, ?, ?, ?, '待购买', 0, ?, ?, ?)
-    """
-    params = [item_id, name, budget_price, platform, notes, created_time, created_time]
+    new_item = {
+        "id": str(datetime.now().timestamp()),
+        "name": name,
+        "budget_price": float(budget_price),
+        "platform": platform,
+        "status": "待购买",
+        "actual_price": 0.0,
+        "notes": notes,
+        "created_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "updated_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
     
-    affected_rows = execute_update(sql, params)
+    items.append(new_item)
     
-    if affected_rows > 0:
-        return {
-            "id": item_id,
-            "name": name,
-            "budget_price": budget_price,
-            "platform": platform,
-            "status": "待购买",
-            "actual_price": 0,
-            "notes": notes,
-            "created_time": created_time,
-            "updated_time": created_time
-        }
+    if save_data(items, f"新增商品: {name}"):
+        return new_item
     return None
 
 
 def update_item(item_id, **kwargs):
     """更新商品信息"""
-    updated_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    kwargs["updated_time"] = updated_time
+    items = load_data()
     
-    update_fields = []
-    params = []
-    for key, value in kwargs.items():
-        update_fields.append(f"{key} = ?")
-        params.append(value)
+    for item in items:
+        if item["id"] == item_id:
+            item.update(kwargs)
+            item["updated_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            break
     
-    params.append(item_id)
-    
-    sql = f"UPDATE shopping_items SET {', '.join(update_fields)} WHERE id = ?"
-    execute_update(sql, params)
+    save_data(items, f"更新商品信息")
 
 
 def delete_item(item_id):
     """删除商品"""
-    sql = "DELETE FROM shopping_items WHERE id = ?"
-    execute_update(sql, [item_id])
+    items = load_data()
+    items = [item for item in items if item["id"] != item_id]
+    save_data(items, f"删除商品")
 
 
 def toggle_status(item_id):
     """切换购买状态"""
-    # 先查询当前状态
-    sql = "SELECT status FROM shopping_items WHERE id = ?"
-    items = execute_query(sql, [item_id])
+    items = load_data()
     
-    if items:
-        status_cycle = ["待购买", "已购买", "已取消"]
-        current_status = items[0]["status"]
-        current_index = status_cycle.index(current_status)
-        next_index = (current_index + 1) % len(status_cycle)
-        next_status = status_cycle[next_index]
-        
-        updated_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        update_sql = "UPDATE shopping_items SET status = ?, updated_time = ? WHERE id = ?"
-        execute_update(update_sql, [next_status, updated_time, item_id])
+    status_cycle = ["待购买", "已购买", "已取消"]
+    
+    for item in items:
+        if item["id"] == item_id:
+            current_index = status_cycle.index(item["status"])
+            next_index = (current_index + 1) % len(status_cycle)
+            item["status"] = status_cycle[next_index]
+            item["updated_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            break
+    
+    save_data(items, f"切换商品状态")
 
 
 def get_items(status=None):
     """获取商品列表,支持筛选"""
-    init_db()
+    items = load_data()
     
     if status and status != "全部":
-        sql = "SELECT * FROM shopping_items WHERE status = ? ORDER BY created_time DESC"
-        return execute_query(sql, [status])
-    else:
-        sql = "SELECT * FROM shopping_items ORDER BY created_time DESC"
-        return execute_query(sql)
+        items = [item for item in items if item["status"] == status]
+    
+    # 按创建时间倒序排序
+    items.sort(key=lambda x: x.get("created_time", ""), reverse=True)
+    
+    return items
 
 
 def calculate_budget_summary(items):
     """计算预算汇总"""
-    total_budget = sum(float(item.get("budget_price", 0)) for item in items)
-    spent = sum(float(item.get("actual_price", 0)) for item in items if item["status"] == "已购买")
+    total_budget = sum(item.get("budget_price", 0) for item in items)
+    spent = sum(item.get("actual_price", 0) for item in items if item["status"] == "已购买")
     remaining = total_budget - spent
     return {
         "total_budget": total_budget,
@@ -236,7 +255,7 @@ with tab1:
                 
                 with cols[0]:
                     st.write(f"**{item['name']}**")
-                    st.caption(f"💰 ¥{float(item['budget_price']):.2f} | 🏪 {item['platform']}")
+                    st.caption(f"💰 ¥{item['budget_price']:.2f} | 🏪 {item['platform']}")
                     
                     # 显示备注
                     notes = item.get("notes", "")

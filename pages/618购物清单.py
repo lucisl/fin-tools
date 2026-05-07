@@ -1,105 +1,90 @@
 import streamlit as st
-import pymysql
+import requests
 from datetime import datetime
 
+API_BASE_URL = st.secrets.get("api_url", "http://localhost:8080/api/db")
 
-def get_mysql_connection():
-    """获取MySQL数据库连接"""
+
+def execute_query(sql, params=None):
+    """执行查询SQL"""
     try:
-        conn = pymysql.connect(
-            host=st.secrets["mysql_host"],
-            port=int(st.secrets.get("mysql_port", 3306)),
-            user=st.secrets["mysql_user"],
-            password=st.secrets["mysql_password"],
-            database=st.secrets["mysql_database"],
-            charset='utf8mb4',
-            cursorclass=pymysql.cursors.DictCursor
+        response = requests.post(
+            f"{API_BASE_URL}/query",
+            json={"sql": sql, "params": params or []},
+            timeout=10
         )
-        return conn
+        result = response.json()
+        
+        if result.get("success"):
+            return result.get("data", [])
+        else:
+            st.error(f"查询失败: {result.get('error')}")
+            return []
     except Exception as e:
-        st.error(f"数据库连接失败: {e}")
-        return None
+        st.error(f"API调用失败: {e}")
+        return []
+
+
+def execute_update(sql, params=None):
+    """执行更新SQL"""
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/execute",
+            json={"sql": sql, "params": params or []},
+            timeout=10
+        )
+        result = response.json()
+        
+        if result.get("success"):
+            return result.get("affectedRows", 0)
+        else:
+            st.error(f"执行失败: {result.get('error')}")
+            return 0
+    except Exception as e:
+        st.error(f"API调用失败: {e}")
+        return 0
 
 
 def init_db():
     """初始化数据库表"""
-    conn = get_mysql_connection()
-    if not conn:
-        return
-    
-    try:
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS shopping_items (
-                id VARCHAR(50) PRIMARY KEY,
-                name VARCHAR(255) NOT NULL,
-                budget_price DECIMAL(10, 2) DEFAULT 0,
-                platform VARCHAR(50) DEFAULT '',
-                status VARCHAR(20) DEFAULT '待购买',
-                actual_price DECIMAL(10, 2) DEFAULT 0,
-                notes TEXT,
-                created_time DATETIME NOT NULL,
-                updated_time DATETIME NOT NULL
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """)
-        
-        conn.commit()
-    except Exception as e:
-        st.error(f"初始化数据库失败: {e}")
-    finally:
-        conn.close()
+    sql = """
+        CREATE TABLE IF NOT EXISTS shopping_items (
+            id VARCHAR(50) PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            budget_price DECIMAL(10,2) DEFAULT 0,
+            platform VARCHAR(50) DEFAULT '',
+            status VARCHAR(20) DEFAULT '待购买',
+            actual_price DECIMAL(10,2) DEFAULT 0,
+            notes TEXT,
+            created_time DATETIME NOT NULL,
+            updated_time DATETIME NOT NULL
+        )
+    """
+    execute_update(sql)
 
 
 def load_data():
     """加载购物清单数据"""
     init_db()
-    conn = get_mysql_connection()
-    if not conn:
-        return []
-    
-    try:
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT * FROM shopping_items ORDER BY created_time DESC")
-        items = cursor.fetchall()
-        
-        # 转换数据格式
-        for item in items:
-            item['budget_price'] = float(item['budget_price'])
-            item['actual_price'] = float(item['actual_price'])
-            if item['created_time']:
-                item['created_time'] = item['created_time'].strftime("%Y-%m-%d %H:%M:%S")
-            if item['updated_time']:
-                item['updated_time'] = item['updated_time'].strftime("%Y-%m-%d %H:%M:%S")
-        
-        return items
-    except Exception as e:
-        st.error(f"加载数据失败: {e}")
-        return []
-    finally:
-        conn.close()
+    sql = "SELECT * FROM shopping_items ORDER BY created_time DESC"
+    return execute_query(sql)
 
 
 def add_item(name, budget_price, platform, notes=""):
     """新增商品"""
-    conn = get_mysql_connection()
-    if not conn:
-        return None
+    item_id = str(datetime.now().timestamp())
+    created_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    try:
-        cursor = conn.cursor()
-        
-        item_id = str(datetime.now().timestamp())
-        created_time = datetime.now()
-        
-        cursor.execute("""
-            INSERT INTO shopping_items (id, name, budget_price, platform, status, actual_price, notes, created_time, updated_time)
-            VALUES (%s, %s, %s, %s, '待购买', 0, %s, %s, %s)
-        """, (item_id, name, budget_price, platform, notes, created_time, created_time))
-        
-        conn.commit()
-        
+    sql = """
+        INSERT INTO shopping_items 
+        (id, name, budget_price, platform, status, actual_price, notes, created_time, updated_time)
+        VALUES (?, ?, ?, ?, '待购买', 0, ?, ?, ?)
+    """
+    params = [item_id, name, budget_price, platform, notes, created_time, created_time]
+    
+    affected_rows = execute_update(sql, params)
+    
+    if affected_rows > 0:
         return {
             "id": item_id,
             "name": name,
@@ -108,139 +93,69 @@ def add_item(name, budget_price, platform, notes=""):
             "status": "待购买",
             "actual_price": 0,
             "notes": notes,
-            "created_time": created_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "updated_time": created_time.strftime("%Y-%m-%d %H:%M:%S")
+            "created_time": created_time,
+            "updated_time": created_time
         }
-    except Exception as e:
-        st.error(f"添加商品失败: {e}")
-        return None
-    finally:
-        conn.close()
+    return None
 
 
 def update_item(item_id, **kwargs):
     """更新商品信息"""
-    conn = get_mysql_connection()
-    if not conn:
-        return
+    updated_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    kwargs["updated_time"] = updated_time
     
-    try:
-        cursor = conn.cursor()
-        
-        updated_time = datetime.now()
-        kwargs["updated_time"] = updated_time
-        
-        update_fields = []
-        update_values = []
-        for key, value in kwargs.items():
-            update_fields.append(f"{key} = %s")
-            update_values.append(value)
-        
-        update_values.append(item_id)
-        
-        sql = f"UPDATE shopping_items SET {', '.join(update_fields)} WHERE id = %s"
-        cursor.execute(sql, update_values)
-        
-        conn.commit()
-    except Exception as e:
-        st.error(f"更新商品失败: {e}")
-    finally:
-        conn.close()
+    update_fields = []
+    params = []
+    for key, value in kwargs.items():
+        update_fields.append(f"{key} = ?")
+        params.append(value)
+    
+    params.append(item_id)
+    
+    sql = f"UPDATE shopping_items SET {', '.join(update_fields)} WHERE id = ?"
+    execute_update(sql, params)
 
 
 def delete_item(item_id):
     """删除商品"""
-    conn = get_mysql_connection()
-    if not conn:
-        return
-    
-    try:
-        cursor = conn.cursor()
-        
-        cursor.execute("DELETE FROM shopping_items WHERE id = %s", (item_id,))
-        
-        conn.commit()
-    except Exception as e:
-        st.error(f"删除商品失败: {e}")
-    finally:
-        conn.close()
+    sql = "DELETE FROM shopping_items WHERE id = ?"
+    execute_update(sql, [item_id])
 
 
 def toggle_status(item_id):
     """切换购买状态"""
-    conn = get_mysql_connection()
-    if not conn:
-        return
+    # 先查询当前状态
+    sql = "SELECT status FROM shopping_items WHERE id = ?"
+    items = execute_query(sql, [item_id])
     
-    try:
-        cursor = conn.cursor()
+    if items:
+        status_cycle = ["待购买", "已购买", "已取消"]
+        current_status = items[0]["status"]
+        current_index = status_cycle.index(current_status)
+        next_index = (current_index + 1) % len(status_cycle)
+        next_status = status_cycle[next_index]
         
-        cursor.execute("SELECT status FROM shopping_items WHERE id = %s", (item_id,))
-        row = cursor.fetchone()
-        
-        if row:
-            status_cycle = ["待购买", "已购买", "已取消"]
-            current_status = row['status']
-            current_index = status_cycle.index(current_status)
-            next_index = (current_index + 1) % len(status_cycle)
-            next_status = status_cycle[next_index]
-            
-            updated_time = datetime.now()
-            cursor.execute("""
-                UPDATE shopping_items 
-                SET status = %s, updated_time = %s 
-                WHERE id = %s
-            """, (next_status, updated_time, item_id))
-            
-            conn.commit()
-    except Exception as e:
-        st.error(f"切换状态失败: {e}")
-    finally:
-        conn.close()
+        updated_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        update_sql = "UPDATE shopping_items SET status = ?, updated_time = ? WHERE id = ?"
+        execute_update(update_sql, [next_status, updated_time, item_id])
 
 
 def get_items(status=None):
     """获取商品列表,支持筛选"""
     init_db()
-    conn = get_mysql_connection()
-    if not conn:
-        return []
     
-    try:
-        cursor = conn.cursor()
-        
-        if status and status != "全部":
-            cursor.execute("""
-                SELECT * FROM shopping_items 
-                WHERE status = %s 
-                ORDER BY created_time DESC
-            """, (status,))
-        else:
-            cursor.execute("SELECT * FROM shopping_items ORDER BY created_time DESC")
-        
-        items = cursor.fetchall()
-        
-        # 转换数据格式
-        for item in items:
-            item['budget_price'] = float(item['budget_price'])
-            item['actual_price'] = float(item['actual_price'])
-            if item['created_time']:
-                item['created_time'] = item['created_time'].strftime("%Y-%m-%d %H:%M:%S")
-            if item['updated_time']:
-                item['updated_time'] = item['updated_time'].strftime("%Y-%m-%d %H:%M:%S")
-        
-        return items
-    except Exception as e:
-        st.error(f"获取商品列表失败: {e}")
-        return []
-    finally:
-        conn.close()
+    if status and status != "全部":
+        sql = "SELECT * FROM shopping_items WHERE status = ? ORDER BY created_time DESC"
+        return execute_query(sql, [status])
+    else:
+        sql = "SELECT * FROM shopping_items ORDER BY created_time DESC"
+        return execute_query(sql)
 
 
 def calculate_budget_summary(items):
     """计算预算汇总"""
-    total_budget = sum(item.get("budget_price", 0) for item in items)
-    spent = sum(item.get("actual_price", 0) for item in items if item["status"] == "已购买")
+    total_budget = sum(float(item.get("budget_price", 0)) for item in items)
+    spent = sum(float(item.get("actual_price", 0)) for item in items if item["status"] == "已购买")
     remaining = total_budget - spent
     return {
         "total_budget": total_budget,
@@ -321,7 +236,7 @@ with tab1:
                 
                 with cols[0]:
                     st.write(f"**{item['name']}**")
-                    st.caption(f"💰 ¥{item['budget_price']:.2f} | 🏪 {item['platform']}")
+                    st.caption(f"💰 ¥{float(item['budget_price']):.2f} | 🏪 {item['platform']}")
                     
                     # 显示备注
                     notes = item.get("notes", "")
@@ -360,7 +275,7 @@ if "edit_item_id" in st.session_state:
         def edit_item_dialog(item):
             name = st.text_input("商品名称", value=item["name"])
             
-            budget_price = st.number_input("预算价格", min_value=0.0, value=item["budget_price"], step=0.01)
+            budget_price = st.number_input("预算价格", min_value=0.0, value=float(item["budget_price"]), step=0.01)
             
             platforms = ["淘宝", "天猫", "京东", "拼多多", "其他"]
             platform_index = platforms.index(item["platform"]) if item["platform"] in platforms else 0
@@ -369,9 +284,9 @@ if "edit_item_id" in st.session_state:
             notes = st.text_area("备注", value=item.get("notes", ""))
             
             if item["status"] == "已购买":
-                actual_price = st.number_input("实际价格", min_value=0.0, value=item.get("actual_price", 0), step=0.01)
+                actual_price = st.number_input("实际价格", min_value=0.0, value=float(item.get("actual_price", 0)), step=0.01)
             else:
-                actual_price = item.get("actual_price", 0)
+                actual_price = float(item.get("actual_price", 0))
             
             col1, col2 = st.columns(2)
             if col1.button("保存修改", use_container_width=True):

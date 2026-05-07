@@ -64,3 +64,6 @@ target
 /data
 
 *.flattened-pom.xml
+
+### secrets ###
+.streamlit/secrets.toml

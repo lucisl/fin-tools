@@ -9,5 +9,16 @@
     "notes": "目前价格293",
     "created_time": "2026-05-07 07:28:06",
     "updated_time": "2026-05-07 07:28:06"
+  },
+  {
+    "id": "1778139322.261571",
+    "name": "TCL-75-Ultra电视",
+    "budget_price": 4400.0,
+    "platform": "京东",
+    "status": "待购买",
+    "actual_price": 0.0,
+    "notes": "返利、客服返利 预计价格在44xx左右",
+    "created_time": "2026-05-07 07:35:22",
+    "updated_time": "2026-05-07 07:35:22"
   }
 ]

@@ -195,7 +195,7 @@ def calculate_completion_rate(items):
 # ======================================
 #               Web UI
 # ======================================
-st.title("🛒 618购物清单")
+st.title("🛒 购物清单")
 
 # 侧边栏筛选
 st.sidebar.header("🔍 筛选条件")

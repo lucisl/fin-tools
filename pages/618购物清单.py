@@ -1,84 +1,188 @@
 import streamlit as st
-import json
+import sqlite3
 import os
 from datetime import datetime
 
-SHOPPING_LIST_PATH = "config/shopping_list.json"
+DB_PATH = "data/shopping_list.db"
+
+
+def init_db():
+    """初始化数据库"""
+    os.makedirs("data", exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS shopping_items (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            budget_price REAL DEFAULT 0,
+            platform TEXT DEFAULT '',
+            status TEXT DEFAULT '待购买',
+            actual_price REAL DEFAULT 0,
+            notes TEXT DEFAULT '',
+            created_time TEXT NOT NULL,
+            updated_time TEXT NOT NULL
+        )
+    """)
+    
+    conn.commit()
+    conn.close()
+
+
+def get_db_connection():
+    """获取数据库连接"""
+    init_db()
+    return sqlite3.connect(DB_PATH)
 
 
 def load_data():
     """加载购物清单数据"""
-    if not os.path.exists(SHOPPING_LIST_PATH):
-        return []
-    with open(SHOPPING_LIST_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def save_data(data):
-    """保存购物清单数据"""
-    os.makedirs("config", exist_ok=True)
-    with open(SHOPPING_LIST_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM shopping_items ORDER BY created_time DESC")
+    rows = cursor.fetchall()
+    
+    items = []
+    for row in rows:
+        items.append({
+            "id": row[0],
+            "name": row[1],
+            "budget_price": row[2],
+            "platform": row[3],
+            "status": row[4],
+            "actual_price": row[5],
+            "notes": row[6],
+            "created_time": row[7],
+            "updated_time": row[8]
+        })
+    
+    conn.close()
+    return items
 
 
 def add_item(name, budget_price, platform, notes=""):
     """新增商品"""
-    items = load_data()
-    new_item = {
-        "id": str(datetime.now().timestamp()),
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    item_id = str(datetime.now().timestamp())
+    created_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    cursor.execute("""
+        INSERT INTO shopping_items (id, name, budget_price, platform, status, actual_price, notes, created_time, updated_time)
+        VALUES (?, ?, ?, ?, '待购买', 0, ?, ?, ?)
+    """, (item_id, name, budget_price, platform, notes, created_time, created_time))
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "id": item_id,
         "name": name,
         "budget_price": budget_price,
         "platform": platform,
         "status": "待购买",
         "actual_price": 0,
         "notes": notes,
-        "created_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "updated_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "created_time": created_time,
+        "updated_time": created_time
     }
-    items.append(new_item)
-    save_data(items)
-    return new_item
 
 
 def update_item(item_id, **kwargs):
     """更新商品信息"""
-    items = load_data()
-    for item in items:
-        if item["id"] == item_id:
-            item.update(kwargs)
-            item["updated_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            break
-    save_data(items)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    updated_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    kwargs["updated_time"] = updated_time
+    
+    update_fields = []
+    update_values = []
+    for key, value in kwargs.items():
+        update_fields.append(f"{key} = ?")
+        update_values.append(value)
+    
+    update_values.append(item_id)
+    
+    sql = f"UPDATE shopping_items SET {', '.join(update_fields)} WHERE id = ?"
+    cursor.execute(sql, update_values)
+    
+    conn.commit()
+    conn.close()
 
 
 def delete_item(item_id):
     """删除商品"""
-    items = load_data()
-    items = [item for item in items if item["id"] != item_id]
-    save_data(items)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("DELETE FROM shopping_items WHERE id = ?", (item_id,))
+    
+    conn.commit()
+    conn.close()
 
 
 def toggle_status(item_id):
     """切换购买状态"""
-    items = load_data()
-    status_cycle = ["待购买", "已购买", "已取消"]
-    for item in items:
-        if item["id"] == item_id:
-            current_index = status_cycle.index(item["status"])
-            next_index = (current_index + 1) % len(status_cycle)
-            item["status"] = status_cycle[next_index]
-            item["updated_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            break
-    save_data(items)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT status FROM shopping_items WHERE id = ?", (item_id,))
+    row = cursor.fetchone()
+    
+    if row:
+        status_cycle = ["待购买", "已购买", "已取消"]
+        current_status = row[0]
+        current_index = status_cycle.index(current_status)
+        next_index = (current_index + 1) % len(status_cycle)
+        next_status = status_cycle[next_index]
+        
+        updated_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("""
+            UPDATE shopping_items 
+            SET status = ?, updated_time = ? 
+            WHERE id = ?
+        """, (next_status, updated_time, item_id))
+        
+        conn.commit()
+    
+    conn.close()
 
 
 def get_items(status=None):
     """获取商品列表,支持筛选"""
-    items = load_data()
+    conn = get_db_connection()
+    cursor = conn.cursor()
     
     if status and status != "全部":
-        items = [item for item in items if item["status"] == status]
+        cursor.execute("""
+            SELECT * FROM shopping_items 
+            WHERE status = ? 
+            ORDER BY created_time DESC
+        """, (status,))
+    else:
+        cursor.execute("SELECT * FROM shopping_items ORDER BY created_time DESC")
     
+    rows = cursor.fetchall()
+    
+    items = []
+    for row in rows:
+        items.append({
+            "id": row[0],
+            "name": row[1],
+            "budget_price": row[2],
+            "platform": row[3],
+            "status": row[4],
+            "actual_price": row[5],
+            "notes": row[6],
+            "created_time": row[7],
+            "updated_time": row[8]
+        })
+    
+    conn.close()
     return items
 
 
